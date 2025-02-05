@@ -30,9 +30,60 @@ def getAllFiles(path, black_dir):  # 获取全部文件
                     file_list.append(f_fullpath[len(path) + 1:])  # 相对路径s
     return file_list
 
+def my_copy(TempUpdate):
+    for key, value in TempUpdate.items():
+        if not os.path.exists(os.path.dirname(value)):  # 不存在文件夹就创建文件夹
+            os.makedirs(os.path.dirname(value))
+        try:
+            shutil.copy2(key, value)  # 复制替换文件
+        except:
+            os.chmod(key, stat.S_IWRITE)  # 取消只读权限
+            if os.path.exists(value):
+                os.chmod(value, stat.S_IWRITE)  # 取消只读权限
+            try:
+                shutil.copy2(key, value)
+            except:
+                print(red(f'复制失败{key} > {value}'))
 
+def my_delete(TempRemove):
+    for key in TempRemove:
+        try:
+            os.remove(key)
+        except:
+            os.chmod(key, stat.S_IWRITE)  # 取消只读权限
+            os.remove(key)
+
+def my_move(TempRename):
+    for key, value in TempRename.items():
+        if not os.path.exists(os.path.dirname(value)):  # 不存在文件夹就创建文件夹
+            os.makedirs(os.path.dirname(value))
+        try:
+            shutil.move(key, value)
+        except:
+            os.chmod(key, stat.S_IWRITE)  # 取消只读权限
+            try:
+                shutil.move(key, value)
+            except:
+                print(red(f'重命名失败{key} > {value}'))
+def list_to_dict_with_md5(root,list1):
+    dict1={}
+    for i in list1:
+        md5=get_file_md5(os.path.normpath(os.path.join(root,i)))
+        if md5 in dict1.keys():
+            dict1[md5].append(i)
+        else:
+            dict1[md5]=[i]
+    return dict1
+def red(str):
+    return f'\033[91m{str}\033[0m'
+def green(str):
+    return f'\033[32m{str}\033[0m'
+def yellow(str):
+    return f'\033[33m{str}\033[0m'
+def blue(str):
+    return f'\033[34m{str}\033[0m'
 def dirCompare(raw_root, backup_root, blacklist):
-    print(f'\033[1;32m--------------------- {raw_root} --------------------- \033[0m')
+    print(green(f'--------------------- {raw_root} ---------------------'))
 
     ################### 获取全部文件，去重 ###################
     raw_files = getAllFiles(raw_root, blacklist)
@@ -50,55 +101,90 @@ def dirCompare(raw_root, backup_root, blacklist):
         t2 = os.stat(r).st_mtime
         if t1 == t2 or os.stat(l).st_size == os.stat(r).st_size:  # 修改日期 或 文件大小 相同
             continue
-        elif get_file_md5(l) == get_file_md5(r):  # md5 相同，则
-            os.utime(r, (t1, t2))  # 修改：修改日期
+        # elif get_file_md5(l) == get_file_md5(r):  # md5 相同，则 #文件大小不同，应该不需要再比较md5
+        #     os.utime(r, (t1, t2))  # 修改：修改日期
         else:
-            print('\033[1;32m%s\033[0m' % r)
+            print(green(f'更新:{l} > {r}'))
             TempUpdate[l] = r
 
     if len(TempUpdate) > 0:
         if input("Update?(Y/N):") in ['Y', 'y']:
-            for key, value in TempUpdate.items():
-                try:
-                    shutil.copy2(key, value)  # 复制替换文件
-                except:
-                    os.chmod(key, stat.S_IWRITE)  # 取消只读权限
-                    os.chmod(value, stat.S_IWRITE)  # 取消只读权限
-                    shutil.copy2(key, value)
-
-                    ################### onlyIn_Raw ： copy ###################
+            my_move(TempUpdate)
+    ################### rename ###################
     onlyIn_Raw = list(setA - setB)
+    onlyIn_backup = list(setB - setA)
+    onlyIn_Raw_d = list_to_dict_with_md5(raw_root, onlyIn_Raw)
+    onlyIn_backup_d= list_to_dict_with_md5(backup_root, onlyIn_backup)
+    renamelist=set(onlyIn_Raw_d.keys()) & set(onlyIn_backup_d.keys())#从只在一边的里面找是否有重命名的情况
+    # print(onlyIn_Raw,onlyIn_backup)
+    # print(onlyIn_Raw_d,onlyIn_backup_d)
+    # print(renamelist)
+    TempRename = {}
+    TempCopy = {}
+    TempRemove = []
+    for md5 in renamelist: #遍历需要重命名的onlyIn_Raw文件的md5
+        len1 = len(onlyIn_Raw_d[md5])
+        len2 = len(onlyIn_backup_d[md5])
+        list1 = [os.path.normpath(os.path.join(backup_root,i)) for i in onlyIn_Raw_d[md5]]#重命名后的 文件名
+        list2 = [os.path.normpath(os.path.join(backup_root, i)) for i in onlyIn_backup_d[md5]]#重命名前的 文件
+        if len1 == len2:
+            for i in range(len1):
+                TempRename[list2[i]] = list1[i]
+                print(yellow(f'重命名:{list2[i]} > {list1[i]}'))
+                onlyIn_Raw.remove(os.path.relpath(list1[i], backup_root))
+                onlyIn_backup.remove(os.path.relpath(list2[i], backup_root))
+        elif len1 > len2:
+            for i in range(len1):
+                try:
+                    TempRename[list2[i]] = list1[i]
+                    print(yellow(f'重命名:{list2[i]} > {list1[i]}'))
+                    onlyIn_Raw.remove(os.path.relpath(list1[i], backup_root))
+                    onlyIn_backup.remove(os.path.relpath(list2[i], backup_root))
+                except:
+                    TempCopy[list1[0]] = list1[i]#len1 > len2，所以肯定存在list1[0]，把第一个拿来复制
+                    print(green(f'复制:{list1[0]} > {list1[i]}'))
+                    onlyIn_Raw.remove(os.path.relpath(list1[i], backup_root))
+        elif len1 < len2:
+            for i in range(len2):
+                try:
+                    TempRename[list2[i]] = list1[i]
+                    print(yellow(f'重命名:{list2[i]} > {list1[i]}'))
+                    onlyIn_Raw.remove(os.path.relpath(list1[i], backup_root))
+                    onlyIn_backup.remove(os.path.relpath(list2[i], backup_root))
+                except:
+                    TempRemove.append(list2[i])
+                    print(green(f'删除:{list2[i]}'))
+                    onlyIn_backup.remove(os.path.relpath(list2[i], backup_root))
+        if len(TempRename) > 0 or len(TempCopy) > 0 or len(TempRemove) > 0:
+            if input("Rename?(Y/N):") in ['Y', 'y']:
+                my_move(TempRename)
+                my_copy(TempCopy)
+                my_delete(TempRemove)
+
+
+
+
+
+    ################### onlyIn_Raw ： copy ###################
     TempCopy = {}
     if len(onlyIn_Raw) > 0:
         for of in sorted(onlyIn_Raw):  # 遍历列表，复制到备份文件夹
             l = os.path.normpath(os.path.join(raw_root, of))
             r = os.path.normpath(os.path.join(backup_root, of))
-            print('\033[1;32m%s\033[0m' % r)
+            print(green(f'复制:{l} > {r}'))
             TempCopy[l] = r
         if input("Copy?(Y/N):") in ['Y', 'y']:
-            for key, value in TempCopy.items():
-                if not os.path.exists(os.path.dirname(value)):  # 不存在文件夹就创建文件夹
-                    os.makedirs(os.path.dirname(value))
-                try:
-                    shutil.copy2(key, value)  # 复制
-                except:
-                    print(f'复制失败：{key}')
+            my_copy(TempCopy)
 
     ################### onlyIn_backup ： remove ###################
-    onlyIn_backup = list(setB - setA)
     TempRemove = []
     if len(onlyIn_backup) > 0:
         for of in sorted(onlyIn_backup):  # 遍历列表删除
             r = os.path.normpath(os.path.join(backup_root, of))
-            print('\033[1;31m%s\033[0m' % r)
+            print(red(f'删除:{r}'))
             TempRemove.append(r)
         if input("Delete?(Y/N):") in ['Y', 'y']:
-            for key in TempRemove:
-                try:
-                    os.remove(key)
-                except:
-                    os.chmod(key, stat.S_IWRITE)  # 取消只读权限
-                    os.remove(key)
+            my_delete(TempRemove)
 
 
 ################### 删除空文件夹 ###################
